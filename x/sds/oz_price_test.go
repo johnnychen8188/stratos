@@ -81,6 +81,8 @@ var (
 	idxOwner2 = sdk.AccAddress(idxOwnerPrivKey2.PubKey().Address())
 	idxOwner3 = sdk.AccAddress(idxOwnerPrivKey3.PubKey().Address())
 
+	resNodeInitialStakeForMultipleNodes = sdk.NewInt(3 * stos2ustos)
+
 	resNodePubKey1       = ed25519.GenPrivKey().PubKey()
 	resNodeAddr1         = sdk.AccAddress(resNodePubKey1.Address())
 	resNodeNetworkId1    = stratos.SdsAddress(resNodePubKey1.Address())
@@ -588,7 +590,7 @@ func setupMsgRemoveResourceNode(i int, resNodeNetworkId stratos.SdsAddress, resO
 }
 func setupMsgCreateResourceNode(i int, resNodeNetworkId stratos.SdsAddress, resNodePubKey cryptotypes.PubKey, resOwner sdk.AccAddress) *registertypes.MsgCreateResourceNode {
 	nodeType := uint32(registertypes.STORAGE)
-	createResourceNodeMsg, _ := registertypes.NewMsgCreateResourceNode(resNodeNetworkId, resNodePubKey, sdk.NewCoin(stratos.USTOS, resNodeInitialStake1), resOwner, registertypes.NewDescription("sds://resourceNode"+strconv.Itoa(i+1), "", "", "", ""), nodeType)
+	createResourceNodeMsg, _ := registertypes.NewMsgCreateResourceNode(resNodeNetworkId, resNodePubKey, sdk.NewCoin(stratos.USTOS, resNodeInitialStakeForMultipleNodes), resOwner, registertypes.NewDescription("sds://resourceNode"+strconv.Itoa(i+1), "", "", "", ""), nodeType)
 	return createResourceNodeMsg
 }
 
@@ -837,7 +839,7 @@ func setupAccounts() ([]authtypes.GenesisAccount, []banktypes.Balance) {
 	return accs, balances
 }
 
-func setupAccounts100ResNodes(resOwners []sdk.AccAddress) ([]authtypes.GenesisAccount, []banktypes.Balance) {
+func setupAccountsMultipleResNodes(resOwners []sdk.AccAddress) ([]authtypes.GenesisAccount, []banktypes.Balance) {
 
 	resOwnerAccs := make([]*authtypes.BaseAccount, 0, len(resOwners))
 	//************************** setup resource nodes owners' accounts **************************
@@ -953,6 +955,29 @@ func setupAllResourceNodes() []registertypes.ResourceNode {
 	resourceNodes = append(resourceNodes, resourceNode3)
 	resourceNodes = append(resourceNodes, resourceNode4)
 	resourceNodes = append(resourceNodes, resourceNode5)
+	return resourceNodes
+}
+
+func setupMultipleResourceNodes(resOwnerPrivKeys []*secp256k1.PrivKey, resNodePubKeys []cryptotypes.PubKey, resOwners []sdk.AccAddress, resNodeNetworkIds []stratos.SdsAddress) []registertypes.ResourceNode {
+	if len(resOwnerPrivKeys) != len(resNodePubKeys) ||
+		len(resNodePubKeys) != len(resOwners) ||
+		len(resOwners) != len(resNodeNetworkIds) {
+		return nil
+	}
+
+	numOfNodes := len(resOwnerPrivKeys)
+	resourceNodes := make([]registertypes.ResourceNode, 0, numOfNodes)
+
+	time, _ := time.Parse(time.RubyDate, "Fri Sep 24 10:37:13 -0400 2021")
+	nodeType := registertypes.STORAGE
+
+	for i, _ := range resOwnerPrivKeys {
+		resourceNodeTmp, _ := registertypes.NewResourceNode(resNodeNetworkIds[i], resNodePubKeys[i], resOwners[i], registertypes.NewDescription("sds://resourceNode"+strconv.Itoa(i+1), "", "", "", ""), nodeType, time)
+		resourceNodeTmp = resourceNodeTmp.AddToken(resNodeInitialStakeForMultipleNodes)
+		resourceNodeTmp.Status = stakingtypes.Bonded
+		resourceNodes = append(resourceNodes, resourceNodeTmp)
+	}
+
 	return resourceNodes
 }
 
@@ -1169,7 +1194,7 @@ func TestOzPriceChangeAddMultipleResourceNodeAndThenRemove(t *testing.T) {
 
 	/********************* initialize mock app *********************/
 	//mApp, k, stakingKeeper, bankKeeper, supplyKeeper, registerKeeper := getMockApp(t)
-	accs, balances := setupAccounts100ResNodes(resOwners)
+	accs, balances := setupAccountsMultipleResNodes(resOwners)
 	//stApp := app.SetupWithGenesisAccounts(accs, chainID, balances...)
 	validators := make([]*tmtypes.Validator, 0)
 	valSet := tmtypes.NewValidatorSet(validators)
@@ -1269,6 +1294,127 @@ func TestOzPriceChangeAddMultipleResourceNodeAndThenRemove(t *testing.T) {
 		dataToExcel = append(dataToExcel, priceAfter)
 		priceBefore = priceAfter
 	}
+
+	for i := 0; i < NUM_OF_SAMPLE; i++ {
+		createResourceNodeMsg := setupMsgRemoveResourceNode(i, resNodeNetworkIds[i], resOwners[i])
+		/********************* deliver tx *********************/
+
+		resOwnerAcc := accountKeeper.GetAccount(ctx, resOwners[i])
+		ownerAccNum := resOwnerAcc.GetAccountNumber()
+		ownerAccSeq := resOwnerAcc.GetSequence()
+
+		_, _, err = app.SignCheckDeliver(t, txGen, stApp.BaseApp, header, []sdk.Msg{createResourceNodeMsg}, chainID, []uint64{ownerAccNum}, []uint64{ownerAccSeq}, true, true, resOwnerPrivKeys[i])
+		require.NoError(t, err)
+		/********************* commit & check result *********************/
+		header = tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+		stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+		ctx = stApp.BaseApp.NewContext(true, header)
+
+		priceAfter, uozPricePercentage, ozoneLimitPercentage = printCurrUozPrice(ctx, registerKeeper, priceBefore)
+		require.True(t, uozPricePercentage.GT(sdk.ZeroDec()), "Uoz price should increase after RemoveResourceNode")
+		require.True(t, ozoneLimitPercentage.LT(sdk.ZeroDec()), "OzLimit should decrease after RemoveResourceNode")
+		println("********************************* Deliver CreateResourceNode Tx END ********************************************\n\n...\n[NEXT TEST CASE]")
+
+		dataToExcel = append(dataToExcel, priceAfter)
+		priceBefore = priceAfter
+	}
+
+	exportToCSV(dataToExcel)
+
+}
+
+func TestOzPriceChangeRemoveMultipleResourceNodeAfterGenesis(t *testing.T) {
+	NUM_OF_SAMPLE := 100
+	dataToExcel := make([]UozPriceFactors, 0, NUM_OF_SAMPLE)
+
+	resOwners := make([]sdk.AccAddress, 0, NUM_OF_SAMPLE)
+	resOwnerPrivKeys := make([]*secp256k1.PrivKey, 0, NUM_OF_SAMPLE)
+	resOwnerPubkeys := make([]cryptotypes.PubKey, 0, NUM_OF_SAMPLE)
+	resNodeNetworkIds := make([]stratos.SdsAddress, 0, NUM_OF_SAMPLE)
+
+	for i := 0; i < NUM_OF_SAMPLE; i++ {
+		resOwnerPrivKeyTmp := secp256k1.GenPrivKey()
+		resOwnerPrivKeys = append(resOwnerPrivKeys, resOwnerPrivKeyTmp)
+		resOwnerPubKeyTmp := resOwnerPrivKeyTmp.PubKey()
+		resOwnerPubkeys = append(resOwnerPubkeys, resOwnerPrivKeyTmp.PubKey())
+		resNodeAddrTmp := sdk.AccAddress(resOwnerPubKeyTmp.Address())
+		resOwners = append(resOwners, resNodeAddrTmp)
+		resNodeNetworkIds = append(resNodeNetworkIds, stratos.SdsAddress(resNodeAddrTmp))
+	}
+
+	/********************* initialize mock app *********************/
+	//mApp, k, stakingKeeper, bankKeeper, supplyKeeper, registerKeeper := getMockApp(t)
+	accs, balances := setupAccountsMultipleResNodes(resOwners)
+	//stApp := app.SetupWithGenesisAccounts(accs, chainID, balances...)
+	validators := make([]*tmtypes.Validator, 0)
+	valSet := tmtypes.NewValidatorSet(validators)
+	metaNodes := setupAllMetaNodes()
+	resourceNodes := setupMultipleResourceNodes(resOwnerPrivKeys, resOwnerPubkeys, resOwners, resNodeNetworkIds)
+
+	stApp := app.SetupWithGenesisNodeSet(t, true, valSet, metaNodes, resourceNodes, accs, totalUnissuedPrepay, chainID, balances...)
+
+	accountKeeper := stApp.GetAccountKeeper()
+	//bankKeeper := stApp.GetBankKeeper()
+	registerKeeper := stApp.GetRegisterKeeper()
+	//potKeeper := stApp.GetPotKeeper()
+
+	/********************* foundation account deposit *********************/
+	header := tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+	stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+	ctx := stApp.BaseApp.NewContext(true, header)
+
+	foundationDepositMsg := pottypes.NewMsgFoundationDeposit(foundationDeposit, foundationDepositorAccAddr)
+	txGen := app.MakeTestEncodingConfig().TxConfig
+
+	foundationDepositorAcc := accountKeeper.GetAccount(ctx, foundationDepositorAccAddr)
+	accNum := foundationDepositorAcc.GetAccountNumber()
+	accSeq := foundationDepositorAcc.GetSequence()
+	_, _, err := app.SignCheckDeliver(t, txGen, stApp.BaseApp, header, []sdk.Msg{foundationDepositMsg}, chainID, []uint64{accNum}, []uint64{accSeq}, true, true, foundationDepositorPrivKey)
+	require.NoError(t, err)
+	foundationAccountAddr := accountKeeper.GetModuleAddress(pottypes.FoundationAccount)
+	app.CheckBalance(t, stApp, foundationAccountAddr, foundationDeposit)
+
+	/********************* create validator with 50% commission *********************/
+	header = tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+	stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+	ctx = stApp.BaseApp.NewContext(true, header)
+
+	commission := stakingtypes.NewCommissionRates(sdk.NewDecWithPrec(5, 1), sdk.NewDecWithPrec(5, 1), sdk.NewDec(0))
+	description := stakingtypes.NewDescription("foo_moniker", chainID, "", "", "")
+	createValidatorMsg, err := stakingtypes.NewMsgCreateValidator(valOpValAddr1, valConsPubk1, sdk.NewCoin("ustos", valInitialStake), description, commission, sdk.OneInt())
+
+	valOpAcc1 := accountKeeper.GetAccount(ctx, valOpAccAddr1)
+	accNum = valOpAcc1.GetAccountNumber()
+	accSeq = valOpAcc1.GetSequence()
+	_, _, err = app.SignCheckDeliver(t, txGen, stApp.BaseApp, header, []sdk.Msg{createValidatorMsg}, chainID, []uint64{accNum}, []uint64{accSeq}, true, true, valOpPrivKey1)
+	require.NoError(t, err)
+	app.CheckBalance(t, stApp, valOpAccAddr1, nil)
+
+	/********************** commit **********************/
+	header = tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+	stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+	ctx = stApp.BaseApp.NewContext(true, header)
+
+	validator := checkValidator(t, stApp, valOpValAddr1, true)
+	require.Equal(t, stakingtypes.Bonded, validator.Status)
+	require.True(sdk.IntEq(t, valInitialStake, validator.BondedTokens()))
+	_, uozSupply := registerKeeper.UozSupply(ctx)
+	uozPriceFactorsSeq0, uozPricePercentage, ozoneLimitPercentage := printCurrUozPrice(ctx, registerKeeper, UozPriceFactors{
+		UOzonePrice:        registerKeeper.CurrUozPrice(ctx),
+		InitialTotalStakes: registerKeeper.GetInitialGenesisStakeTotal(ctx),
+		//EffectiveTotalStakes: registerKeeper.GetEffectiveGenesisStakeTotal(ctx),
+		TotalUnissuedPrepay: registerKeeper.GetTotalUnissuedPrepay(ctx).Amount,
+		StakeAndPrepay:      registerKeeper.GetInitialGenesisStakeTotal(ctx).Add(registerKeeper.GetTotalUnissuedPrepay(ctx).Amount),
+		OzoneLimit:          registerKeeper.GetRemainingOzoneLimit(ctx),
+		UozSupply:           uozSupply,
+	})
+
+	// start testing
+	println("********************************* Deliver RemoveResourceNode Tx START ********************************************")
+
+	priceBefore := uozPriceFactorsSeq0
+	priceAfter := uozPriceFactorsSeq0
+	dataToExcel = append(dataToExcel, priceBefore)
 
 	for i := 0; i < NUM_OF_SAMPLE; i++ {
 		createResourceNodeMsg := setupMsgRemoveResourceNode(i, resNodeNetworkIds[i], resOwners[i])
