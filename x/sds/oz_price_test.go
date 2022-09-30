@@ -242,6 +242,7 @@ func TestOzPriceChange(t *testing.T) {
 	require.Equal(t, stakingtypes.Bonded, validator.Status)
 	require.True(sdk.IntEq(t, valInitialStake, validator.BondedTokens()))
 
+	_, uozSupply := registerKeeper.UozSupply(ctx)
 	uozPriceFactorsSeq0, uozPricePercentage, ozoneLimitPercentage := printCurrUozPrice(ctx, registerKeeper, UozPriceFactors{
 		UOzonePrice:        registerKeeper.CurrUozPrice(ctx),
 		InitialTotalStakes: registerKeeper.GetInitialGenesisStakeTotal(ctx),
@@ -249,6 +250,7 @@ func TestOzPriceChange(t *testing.T) {
 		TotalUnissuedPrepay: registerKeeper.GetTotalUnissuedPrepay(ctx).Amount,
 		StakeAndPrepay:      registerKeeper.GetInitialGenesisStakeTotal(ctx).Add(registerKeeper.GetTotalUnissuedPrepay(ctx).Amount),
 		OzoneLimit:          registerKeeper.GetRemainingOzoneLimit(ctx),
+		UozSupply:           uozSupply,
 	})
 
 	// start testing
@@ -352,6 +354,8 @@ func TestOzPriceChange(t *testing.T) {
 	/********************* prepare tx data *********************/
 	volumeReportMsg := setupMsgVolumeReport(1)
 
+	potKeeper.InitVariable(ctx)
+
 	lastTotalMinedToken := potKeeper.GetTotalMinedTokens(ctx)
 	println("last committed TotalMinedTokens = " + lastTotalMinedToken.String())
 	epoch, ok := sdk.NewIntFromString(volumeReportMsg.Epoch.String())
@@ -451,7 +455,7 @@ func TestOzPriceChange(t *testing.T) {
 	)
 
 	uozPriceFactorsSeq5, uozPricePercentage, ozoneLimitPercentage := printCurrUozPrice(ctx, registerKeeper, uozPriceFactorsSeq4)
-	require.True(t, uozPricePercentage.LT(sdk.ZeroDec()), "Uoz price should increase after VolumeReport")
+	require.True(t, uozPricePercentage.LT(sdk.ZeroDec()), "Uoz price should decrease after VolumeReport")
 	require.True(t, ozoneLimitPercentage.Equal(sdk.ZeroDec()), "OzLimit shouldn't change after VolumeReport")
 	println("********************************* Deliver VolumeReport Tx END ********************************************\n\n...\n[NEXT TEST CASE]")
 
@@ -1168,6 +1172,128 @@ func TestOzPriceChangePrepay(t *testing.T) {
 		require.True(t, ozoneLimitPercentage.LT(sdk.ZeroDec()), "OzLimit should decrease after PREPAY")
 		println("********************************* Deliver Prepay Tx END ********************************************\n\n...\n[NEXT TEST CASE]")
 
+		priceBefore = priceAfter
+	}
+	exportToCSV(dataToExcel)
+}
+
+func TestOzPriceChangeVolumeReport(t *testing.T) {
+	NUM_OF_SAMPLE := 100
+	dataToExcel := make([]UozPriceFactors, 0, NUM_OF_SAMPLE)
+	/********************* initialize mock app *********************/
+	//mApp, k, stakingKeeper, bankKeeper, supplyKeeper, registerKeeper := getMockApp(t)
+	accs, balances := setupAccounts()
+	//stApp := app.SetupWithGenesisAccounts(accs, chainID, balances...)
+	validators := make([]*tmtypes.Validator, 0)
+	valSet := tmtypes.NewValidatorSet(validators)
+	metaNodes := setupAllMetaNodes()
+	//resourceNodes := setupAllResourceNodes()
+	resourceNodes := make([]registertypes.ResourceNode, 0)
+
+	stApp := app.SetupWithGenesisNodeSet(t, true, valSet, metaNodes, resourceNodes, accs, totalUnissuedPrepay, chainID, balances...)
+
+	accountKeeper := stApp.GetAccountKeeper()
+	//bankKeeper := stApp.GetBankKeeper()
+	registerKeeper := stApp.GetRegisterKeeper()
+	//potKeeper := stApp.GetPotKeeper()
+
+	/********************* foundation account deposit *********************/
+	header := tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+	stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+	ctx := stApp.BaseApp.NewContext(true, header)
+
+	foundationDepositMsg := pottypes.NewMsgFoundationDeposit(foundationDeposit, foundationDepositorAccAddr)
+	txGen := app.MakeTestEncodingConfig().TxConfig
+
+	foundationDepositorAcc := accountKeeper.GetAccount(ctx, foundationDepositorAccAddr)
+	accNum := foundationDepositorAcc.GetAccountNumber()
+	accSeq := foundationDepositorAcc.GetSequence()
+	_, _, err := app.SignCheckDeliver(t, txGen, stApp.BaseApp, header, []sdk.Msg{foundationDepositMsg}, chainID, []uint64{accNum}, []uint64{accSeq}, true, true, foundationDepositorPrivKey)
+	require.NoError(t, err)
+	foundationAccountAddr := accountKeeper.GetModuleAddress(pottypes.FoundationAccount)
+	app.CheckBalance(t, stApp, foundationAccountAddr, foundationDeposit)
+
+	/********************* create validator with 50% commission *********************/
+	header = tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+	stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+	ctx = stApp.BaseApp.NewContext(true, header)
+
+	commission := stakingtypes.NewCommissionRates(sdk.NewDecWithPrec(5, 1), sdk.NewDecWithPrec(5, 1), sdk.NewDec(0))
+	description := stakingtypes.NewDescription("foo_moniker", chainID, "", "", "")
+	createValidatorMsg, err := stakingtypes.NewMsgCreateValidator(valOpValAddr1, valConsPubk1, sdk.NewCoin("ustos", valInitialStake), description, commission, sdk.OneInt())
+
+	valOpAcc1 := accountKeeper.GetAccount(ctx, valOpAccAddr1)
+	accNum = valOpAcc1.GetAccountNumber()
+	accSeq = valOpAcc1.GetSequence()
+	_, _, err = app.SignCheckDeliver(t, txGen, stApp.BaseApp, header, []sdk.Msg{createValidatorMsg}, chainID, []uint64{accNum}, []uint64{accSeq}, true, true, valOpPrivKey1)
+	require.NoError(t, err)
+	app.CheckBalance(t, stApp, valOpAccAddr1, nil)
+
+	/********************** commit **********************/
+	header = tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+	stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+	ctx = stApp.BaseApp.NewContext(true, header)
+
+	validator := checkValidator(t, stApp, valOpValAddr1, true)
+	require.Equal(t, stakingtypes.Bonded, validator.Status)
+	require.True(sdk.IntEq(t, valInitialStake, validator.BondedTokens()))
+	_, uozSupply := registerKeeper.UozSupply(ctx)
+	uozPriceFactorsSeq0, uozPricePercentage, ozoneLimitPercentage := printCurrUozPrice(ctx, registerKeeper, UozPriceFactors{
+		UOzonePrice:        registerKeeper.CurrUozPrice(ctx),
+		InitialTotalStakes: registerKeeper.GetInitialGenesisStakeTotal(ctx),
+		//EffectiveTotalStakes: registerKeeper.GetEffectiveGenesisStakeTotal(ctx),
+		TotalUnissuedPrepay: registerKeeper.GetTotalUnissuedPrepay(ctx).Amount,
+		StakeAndPrepay:      registerKeeper.GetInitialGenesisStakeTotal(ctx).Add(registerKeeper.GetTotalUnissuedPrepay(ctx).Amount),
+		OzoneLimit:          registerKeeper.GetRemainingOzoneLimit(ctx),
+		UozSupply:           uozSupply,
+	})
+
+	// start testing
+	println("\n********************************* Deliver Prepay Tx START ********************************************")
+
+	priceBefore := uozPriceFactorsSeq0
+	priceAfter := uozPriceFactorsSeq0
+	dataToExcel = append(dataToExcel, priceBefore)
+
+	for i := 0; i < NUM_OF_SAMPLE; i++ {
+		prepayMsg := setupPrepayMsg()
+		/********************* deliver tx *********************/
+
+		resOwnerAcc := accountKeeper.GetAccount(ctx, resOwner1)
+		ownerAccNum := resOwnerAcc.GetAccountNumber()
+		ownerAccSeq := resOwnerAcc.GetSequence()
+
+		_, _, err = app.SignCheckDeliver(t, txGen, stApp.BaseApp, header, []sdk.Msg{prepayMsg}, chainID, []uint64{ownerAccNum}, []uint64{ownerAccSeq}, true, true, resOwnerPrivKey1)
+		require.NoError(t, err)
+		/********************* commit & check result *********************/
+		header = tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+		stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+		ctx = stApp.BaseApp.NewContext(true, header)
+		priceAfter, uozPricePercentage, ozoneLimitPercentage = printCurrUozPrice(ctx, registerKeeper, priceBefore)
+		dataToExcel = append(dataToExcel, priceAfter)
+		require.True(t, uozPricePercentage.GT(sdk.ZeroDec()), "Uoz price should increase after PREPAY")
+		require.True(t, ozoneLimitPercentage.LT(sdk.ZeroDec()), "OzLimit should decrease after PREPAY")
+		println("********************************* Deliver Prepay Tx END ********************************************\n\n...\n[NEXT TEST CASE]")
+
+		priceBefore = priceAfter
+	}
+
+	for i := 0; i < NUM_OF_SAMPLE; i++ {
+		println("********************************* Deliver VolumeReport Tx START ********************************************")
+		/********************* prepare tx data *********************/
+		volumeReportMsg := setupMsgVolumeReport(int64(i + 1))
+		resOwnerAcc := accountKeeper.GetAccount(ctx, idxOwner1)
+		ownerAccNum := resOwnerAcc.GetAccountNumber()
+		ownerAccSeq := resOwnerAcc.GetSequence()
+
+		_, _, err = app.SignCheckDeliver(t, txGen, stApp.BaseApp, header, []sdk.Msg{volumeReportMsg}, chainID, []uint64{ownerAccNum}, []uint64{ownerAccSeq}, true, true, idxOwnerPrivKey1)
+		require.NoError(t, err)
+		/********************* commit & check result *********************/
+		header = tmproto.Header{Height: stApp.LastBlockHeight() + 1, ChainID: chainID}
+		stApp.BeginBlock(abci.RequestBeginBlock{Header: header})
+		ctx = stApp.BaseApp.NewContext(true, header)
+		priceAfter, uozPricePercentage, ozoneLimitPercentage = printCurrUozPrice(ctx, registerKeeper, priceBefore)
+		dataToExcel = append(dataToExcel, priceAfter)
 		priceBefore = priceAfter
 	}
 	exportToCSV(dataToExcel)
