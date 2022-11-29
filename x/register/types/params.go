@@ -16,9 +16,9 @@ var _ paramtypes.ParamSet = &Params{}
 
 // Default parameter namespace
 const (
-	DefaultParamSpace = ModuleName
-	DefaultBondDenom  = types.USTOS
-	DefaultMaxEntries = uint32(16)
+	DefaultBondDenom              = types.Wei
+	DefaultMaxEntries             = uint32(16)
+	DefaultResourceNodeRegEnabled = true
 )
 
 // Parameter store keys
@@ -26,12 +26,12 @@ var (
 	KeyBondDenom               = []byte("BondDenom")
 	KeyUnbondingThreasholdTime = []byte("UnbondingThreasholdTime")
 	KeyUnbondingCompletionTime = []byte("UnbondingCompletionTime")
-	KeyMaxEntries              = []byte("KeyMaxEntries")
+	KeyMaxEntries              = []byte("MaxEntries")
+	KeyResourceNodeRegEnabled  = []byte("ResourceNodeRegEnabled")
 
-	DefaultUnbondingThreasholdTime = 180 * 24 * time.Hour           // threashold for unbonding - by default 180 days
-	DefaultUnbondingCompletionTime = 14 * 24 * time.Hour            // lead time to complete unbonding - by default 14 days
-	DefaultUozPrice                = sdk.NewDecWithPrec(1000000, 9) // 0.001 ustos -> 1 uoz
-	DefaultTotalUnissuedPrepay     = sdk.NewInt(0)
+	DefaultUnbondingThreasholdTime = 180 * 24 * time.Hour // threashold for unbonding - by default 180 days
+	DefaultUnbondingCompletionTime = 14 * 24 * time.Hour  // lead time to complete unbonding - by default 14 days
+	DefaultNozPrice                = sdk.NewDec(1000000)  // 0.001gwei -> 1noz = 1000000wei -> 1noz
 )
 
 // ParamKeyTable returns the parameter key table.
@@ -40,12 +40,13 @@ func ParamKeyTable() paramtypes.KeyTable {
 }
 
 // NewParams creates a new Params object
-func NewParams(bondDenom string, threashold, completion time.Duration, maxEntries uint32) Params {
+func NewParams(bondDenom string, threashold, completion time.Duration, maxEntries uint32, resourceNodeRegEnabled bool) Params {
 	return Params{
 		BondDenom:               bondDenom,
 		UnbondingThreasholdTime: threashold,
 		UnbondingCompletionTime: completion,
 		MaxEntries:              maxEntries,
+		ResourceNodeRegEnabled:  resourceNodeRegEnabled,
 	}
 }
 
@@ -56,6 +57,7 @@ func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 		paramtypes.NewParamSetPair(KeyUnbondingThreasholdTime, &p.UnbondingThreasholdTime, validateUnbondingThreasholdTime),
 		paramtypes.NewParamSetPair(KeyUnbondingCompletionTime, &p.UnbondingCompletionTime, validateUnbondingCompletionTime),
 		paramtypes.NewParamSetPair(KeyMaxEntries, &p.MaxEntries, validateMaxEntries),
+		paramtypes.NewParamSetPair(KeyResourceNodeRegEnabled, &p.ResourceNodeRegEnabled, validateResourceNodeRegEnabled),
 	}
 }
 
@@ -72,12 +74,15 @@ func (p Params) Validate() error {
 	if err := validateMaxEntries(p.MaxEntries); err != nil {
 		return err
 	}
+	if err := validateResourceNodeRegEnabled(p.ResourceNodeRegEnabled); err != nil {
+		return err
+	}
 	return nil
 }
 
 // DefaultParams defines the parameters for this module
 func DefaultParams() *Params {
-	p := NewParams(DefaultBondDenom, DefaultUnbondingThreasholdTime, DefaultUnbondingCompletionTime, DefaultMaxEntries)
+	p := NewParams(DefaultBondDenom, DefaultUnbondingThreasholdTime, DefaultUnbondingCompletionTime, DefaultMaxEntries, DefaultResourceNodeRegEnabled)
 	return &p
 }
 
@@ -131,6 +136,15 @@ func validateMaxEntries(i interface{}) error {
 
 	if v <= 0 {
 		return fmt.Errorf("max entries must be positive: %d", v)
+	}
+
+	return nil
+}
+
+func validateResourceNodeRegEnabled(i interface{}) error {
+	_, ok := i.(bool)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
 	}
 
 	return nil

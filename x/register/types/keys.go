@@ -18,18 +18,16 @@ const (
 	RouterKey = ModuleName
 	// QuerierRoute to be used for querier msgs
 	QuerierRoute = ModuleName
-	// ResourceNodeBondedPoolName stores the total balance of bonded resource nodes
-	ResourceNodeBondedPoolName = "resource_node_bonded_pool"
-	// ResourceNodeNotBondedPoolName stores the total balance of not bonded resource nodes
-	ResourceNodeNotBondedPoolName = "resource_node_not_bonded_pool"
-	// MetaNodeBondedPoolName stores the total balance of bonded Meta nodes
-	MetaNodeBondedPoolName = "meta_node_bonded_pool"
-	// MetaNodeNotBondedPoolName stores the total balance of not bonded meta nodes
-	MetaNodeNotBondedPoolName = "meta_node_not_bonded_pool"
-	// TotalUnissuedPrepayName stores the balance of total unissued prepay
-	TotalUnissuedPrepayName = "total_unissued_prepay"
-	// TotalSlashedPoolName stores the balance of total unissued prepay
-	TotalSlashedPoolName = "total_slashed_pool"
+	// ResourceNodeBondedPool stores the total balance of bonded resource nodes
+	ResourceNodeBondedPool = "resource_node_bonded_pool"
+	// ResourceNodeNotBondedPool stores the total balance of not bonded resource nodes
+	ResourceNodeNotBondedPool = "resource_node_not_bonded_pool"
+	// MetaNodeBondedPool stores the total balance of bonded Meta nodes
+	MetaNodeBondedPool = "meta_node_bonded_pool"
+	// MetaNodeNotBondedPool stores the total balance of not bonded meta nodes
+	MetaNodeNotBondedPool = "meta_node_not_bonded_pool"
+	// TotalUnissuedPrepay stores the balance of total unissued prepay
+	TotalUnissuedPrepay = "total_unissued_prepay"
 )
 
 var (
@@ -39,7 +37,7 @@ var (
 	UpperBoundOfTotalOzoneKey    = []byte{0x04}
 	SlashingPrefix               = []byte{0x05}
 	InitialGenesisStakeTotalKey  = []byte{0x06} // key of initial genesis deposit by all resource nodes and meta nodes at t=0
-	InitialUOzonePriceKey        = []byte{0x07} // key of initial uoz price at t=0
+	InitialNOzonePriceKey        = []byte{0x07} // key of initial noz price at t=0
 	MetaNodeCntKey               = []byte{0x08} // the number of all meta nodes
 	ResourceNodeCntKey           = []byte{0x09} // the number of all resource nodes
 
