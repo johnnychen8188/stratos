@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/cosmos/cosmos-sdk/server"
 	svrcmd "github.com/cosmos/cosmos-sdk/server/cmd"
@@ -10,6 +13,14 @@ import (
 	"github.com/stratosnet/stratos-chain/app"
 	stratos "github.com/stratosnet/stratos-chain/types"
 )
+
+func init() {
+	go func() {
+		pprofPort := 1234
+		fmt.Println("pprof registers handlers and listen port:", pprofPort)
+		http.ListenAndServe(":"+strconv.Itoa(pprofPort), nil)
+	}()
+}
 
 func main() {
 	registerDenoms()
